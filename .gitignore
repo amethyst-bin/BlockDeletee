@@ -1,0 +1,22 @@
+target/
+.temp/
+.venv/
+
+# Local runtime/config/secrets
+config.json
+*.local.json
+
+# Large local assets and third-party binaries (ship via releases)
+models/
+third_party/vosk-win64/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Misc local archives
+*.zip

@@ -1,0 +1,51 @@
+{
+  "blocks": {
+    "extra_aliases": {
+      "minecraft:andesite": ["андезит", "андезитовый камень"],
+      "minecraft:bedrock": ["бедрок", "бэдрок"],
+      "minecraft:cobblestone": ["булыжник", "булыга"],
+      "minecraft:dirt": ["земля"],
+      "minecraft:grass_block": ["трава"],
+      "minecraft:stone": ["камень"]
+    },
+    "file": "blocks.json",
+    "shared_aliases": {
+      "алмаз": ["minecraft:diamond_ore", "minecraft:deepslate_diamond_ore"],
+      "железо": ["minecraft:iron_ore", "minecraft:deepslate_iron_ore"],
+      "лазурит": ["minecraft:lapis_ore", "minecraft:deepslate_lapis_ore"],
+      "медь": ["minecraft:copper_ore", "minecraft:deepslate_copper_ore"],
+      "уголь": ["minecraft:coal_ore", "minecraft:deepslate_coal_ore"]
+    }
+  },
+  "microphone": {
+    "blocksize": 9600,
+    "device": null,
+    "enabled": true,
+    "player_name": "PlayerName",
+    "samplerate": 48000
+  },
+  "minecraft": {
+    "dimension_y_limits": {
+      "minecraft:overworld": [-64, 319],
+      "minecraft:the_end": [0, 255],
+      "minecraft:the_nether": [0, 127]
+    },
+    "fill_max_blocks": 32768,
+    "rcon_host": "127.0.0.1",
+    "rcon_password": "CHANGE_ME",
+    "rcon_port": 25575
+  },
+  "speech": {
+    "cooldown_seconds": 2.0,
+    "fuzzy_threshold": 0.7,
+    "log_partials": true,
+    "log_recognized": true,
+    "min_phrase_chars": 2,
+    "model_path": "models/vosk-model-small-ru-0.22",
+    "sample_rate": 48000,
+    "use_grammar": false
+  },
+  "ui": {
+    "mode": "tui"
+  }
+}
