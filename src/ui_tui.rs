@@ -8,6 +8,7 @@ pub(crate) fn run_tui_mode(bootstrap: BackendBootstrap) -> Result<(), String> {
         bootstrap.config.microphone.player_name.clone(),
         bootstrap.config.minecraft.rcon_host.clone(),
         bootstrap.config.minecraft.rcon_port,
+        bootstrap.config.minecraft.rcon_password.clone(),
         bootstrap.config.ui.mode.unwrap_or(crate::UiMode::Tui),
     )));
     let controller = bootstrap.build_controller(ui)?;

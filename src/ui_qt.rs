@@ -42,6 +42,8 @@ struct QtBackendBridge {
     logs_html_changed: qt_signal!(),
     logs_border_color: qt_property!(QString; NOTIFY logs_border_color_changed),
     logs_border_color_changed: qt_signal!(),
+    overlay_error: qt_property!(QString; NOTIFY overlay_error_changed),
+    overlay_error_changed: qt_signal!(),
 
     settings_open: qt_property!(bool; NOTIFY settings_open_changed),
     settings_open_changed: qt_signal!(),
@@ -49,6 +51,8 @@ struct QtBackendBridge {
     settings_host_changed: qt_signal!(),
     settings_port: qt_property!(QString; NOTIFY settings_port_changed),
     settings_port_changed: qt_signal!(),
+    settings_password: qt_property!(QString; NOTIFY settings_password_changed),
+    settings_password_changed: qt_signal!(),
     settings_player_name: qt_property!(QString; NOTIFY settings_player_name_changed),
     settings_player_name_changed: qt_signal!(),
     settings_ui_mode: qt_property!(QString; NOTIFY settings_ui_mode_changed),
@@ -104,17 +108,25 @@ struct QtBackendBridge {
             self.logs_border_color = border_qs;
             self.logs_border_color_changed();
         }
+
+        let overlay_qs: QString = snap.overlay_error.unwrap_or_default().into();
+        if self.overlay_error != overlay_qs {
+            self.overlay_error = overlay_qs;
+            self.overlay_error_changed();
+        }
     }),
 
     open_settings: qt_method!(fn open_settings(&mut self) {
         let snap = ui_snapshot(&qt_ctx().ui);
         self.settings_host = snap.rcon_host.into();
         self.settings_port = snap.rcon_port.to_string().into();
+        self.settings_password = snap.rcon_password.into();
         self.settings_player_name = snap.player_name.into();
         self.settings_ui_mode = snap.ui_mode.as_config_str().to_string().into();
         self.settings_open = true;
         self.settings_host_changed();
         self.settings_port_changed();
+        self.settings_password_changed();
         self.settings_player_name_changed();
         self.settings_ui_mode_changed();
         self.settings_open_changed();
@@ -137,6 +149,11 @@ struct QtBackendBridge {
         self.settings_port_changed();
     }),
 
+    set_settings_password: qt_method!(fn set_settings_password(&mut self, value: QString) {
+        self.settings_password = value;
+        self.settings_password_changed();
+    }),
+
     set_settings_player_name: qt_method!(fn set_settings_player_name(&mut self, value: QString) {
         self.settings_player_name = value;
         self.settings_player_name_changed();
@@ -150,6 +167,7 @@ struct QtBackendBridge {
     save_settings: qt_method!(fn save_settings(&mut self) {
         let host = self.settings_host.to_string();
         let port_text = self.settings_port.to_string();
+        let password = self.settings_password.to_string();
         let player_name = self.settings_player_name.to_string();
         let ui_mode = match UiMode::from_config_str(&self.settings_ui_mode.to_string()) {
             Some(m) => m,
@@ -166,7 +184,7 @@ struct QtBackendBridge {
             }
         };
 
-        match qt_ctx().controller.save_settings_bundle(host, port, player_name, ui_mode) {
+        match qt_ctx().controller.save_settings_bundle(host, port, password, player_name, ui_mode) {
             Ok(outcome) => {
                 self.settings_open = false;
                 self.settings_open_changed();
@@ -191,6 +209,7 @@ pub(crate) fn run_qt_mode(bootstrap: BackendBootstrap) -> Result<(), String> {
         bootstrap.config.microphone.player_name.clone(),
         bootstrap.config.minecraft.rcon_host.clone(),
         bootstrap.config.minecraft.rcon_port,
+        bootstrap.config.minecraft.rcon_password.clone(),
         bootstrap.config.ui.mode.unwrap_or(crate::UiMode::Qt),
     )));
     let controller = Arc::new(bootstrap.build_controller(Arc::clone(&ui))?);
@@ -432,6 +451,40 @@ ApplicationWindow {
         }
     }
 
+    Rectangle {
+        visible: backend.overlay_error.length > 0
+        z: 99
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.topMargin: 12
+        anchors.rightMargin: 12
+        width: Math.min(parent.width * 0.45, 420)
+        height: overlayText.implicitHeight + 18
+        radius: 12
+        color: "#16181d"
+        border.width: 2
+        border.color: "#e25555"
+
+        Column {
+            anchors.fill: parent
+            anchors.margins: 8
+            spacing: 4
+
+            Label {
+                text: " Ошибка"
+                color: "#e25555"
+                font.bold: true
+            }
+            Label {
+                id: overlayText
+                text: backend.overlay_error
+                color: "white"
+                wrapMode: Text.Wrap
+                width: parent.width
+            }
+        }
+    }
+
     Popup {
         id: settingsPopup
         modal: true
@@ -440,7 +493,7 @@ ApplicationWindow {
         x: (root.width - width) / 2
         y: (root.height - height) / 2
         width: Math.min(root.width - 40, 520)
-        height: 360
+        height: Math.min(root.height - 24, 430)
         visible: backend.settings_open
 
         onVisibleChanged: if (!visible) backend.close_settings()
@@ -507,6 +560,7 @@ ApplicationWindow {
             StackLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                Layout.minimumHeight: 0
                 currentIndex: settingsTabs.currentIndex
 
                 ColumnLayout {
@@ -525,7 +579,15 @@ ApplicationWindow {
                         onTextChanged: backend.set_settings_port(text)
                         Layout.fillWidth: true
                     }
-                    Item { Layout.fillHeight: true }
+
+                    Label { text: "RCON Password"; color: "#9ecfff" }
+                    TextField {
+                        text: backend.settings_password
+                        echoMode: TextInput.Password
+                        onTextChanged: backend.set_settings_password(text)
+                        Layout.fillWidth: true
+                    }
+                    Item { Layout.fillHeight: true; Layout.minimumHeight: 0 }
                 }
 
                 ColumnLayout {
@@ -611,12 +673,12 @@ ApplicationWindow {
                     }
 
                     Label {
-                        text: "UI mode и username полностью применятся после перезапуска"
+                        text: "UI mode, username и RCON password полностью применятся после перезапуска"
                         color: "#f2c14e"
                         wrapMode: Text.Wrap
                         Layout.fillWidth: true
                     }
-                    Item { Layout.fillHeight: true }
+                    Item { Layout.fillHeight: true; Layout.minimumHeight: 0 }
                 }
             }
 
@@ -624,7 +686,9 @@ ApplicationWindow {
                 Layout.alignment: Qt.AlignRight
                 Layout.fillWidth: true
                 Layout.topMargin: 4
+                Layout.bottomMargin: 2
                 Layout.preferredHeight: 42
+                Layout.minimumHeight: 42
                 spacing: 8
                 Item { Layout.fillWidth: true }
                 FrameButton {

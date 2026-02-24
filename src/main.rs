@@ -72,7 +72,9 @@ pub(crate) struct UiSnapshot {
     pub(crate) player_name: String,
     pub(crate) rcon_host: String,
     pub(crate) rcon_port: u16,
+    pub(crate) rcon_password: String,
     pub(crate) ui_mode: UiMode,
+    pub(crate) overlay_error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -91,7 +93,9 @@ pub(crate) struct UiState {
     player_name: String,
     rcon_host: String,
     rcon_port: u16,
+    rcon_password: String,
     ui_mode: UiMode,
+    overlay_error: Option<String>,
 }
 
 pub(crate) type UiHandle = Arc<Mutex<UiState>>;
@@ -106,6 +110,7 @@ impl UiState {
         player_name: String,
         rcon_host: String,
         rcon_port: u16,
+        rcon_password: String,
         ui_mode: UiMode,
     ) -> Self {
         Self {
@@ -117,7 +122,9 @@ impl UiState {
             player_name,
             rcon_host,
             rcon_port,
+            rcon_password,
             ui_mode,
+            overlay_error: None,
         }
     }
 }
@@ -145,6 +152,7 @@ impl FooterButton {
 enum SettingsField {
     Host,
     Port,
+    Password,
     PlayerName,
     UiMode,
 }
@@ -183,6 +191,7 @@ struct TuiControls {
 struct SettingsDraft {
     host: String,
     port: String,
+    password: String,
     player_name: String,
     ui_mode: UiMode,
 }
@@ -208,7 +217,9 @@ pub(crate) fn ui_snapshot(ui: &UiHandle) -> UiSnapshot {
         player_name: guard.player_name.clone(),
         rcon_host: guard.rcon_host.clone(),
         rcon_port: guard.rcon_port,
+        rcon_password: guard.rcon_password.clone(),
         ui_mode: guard.ui_mode,
+        overlay_error: guard.overlay_error.clone(),
     }
 }
 
@@ -226,30 +237,68 @@ pub(crate) fn ui_log(ui: &UiHandle, msg: impl Into<String>) {
     if guard.logs.len() >= 256 {
         let _ = guard.logs.pop_front();
     }
+    if let Some(alert) = classify_overlay_error(&msg) {
+        guard.overlay_error = Some(alert);
+    }
     guard.logs.push_back(UiLogEntry { text: msg, count: 1 });
 }
 
 fn ui_set_mic(ui: &UiHandle, ok: bool) {
     if let Ok(mut guard) = ui.lock() {
         guard.mic_ok = ok;
+        if ok {
+            guard.overlay_error = None;
+        }
     }
 }
 
 fn ui_set_rec(ui: &UiHandle, ok: bool) {
     if let Ok(mut guard) = ui.lock() {
         guard.rec_ok = ok;
+        if ok {
+            guard.overlay_error = None;
+        }
     }
 }
 
 fn ui_set_rcon(ui: &UiHandle, ok: bool) {
     if let Ok(mut guard) = ui.lock() {
         guard.rcon_ok = ok;
+        if ok {
+            guard.overlay_error = None;
+        }
     }
 }
 
 fn ui_set_player_online(ui: &UiHandle, online: bool) {
     if let Ok(mut guard) = ui.lock() {
         guard.player_online = online;
+        if online {
+            guard.overlay_error = None;
+        }
+    }
+}
+
+fn classify_overlay_error(msg: &str) -> Option<String> {
+    let lower = msg.to_lowercase();
+    if lower.contains("[rcon-error]") || lower.contains("rcon authentication failed") {
+        if lower.contains("authentication") || lower.contains("auth") {
+            Some("RCON: ошибка аутентификации".to_string())
+        } else {
+            Some(msg.to_string())
+        }
+    } else if lower.contains("[rcon-player-error]") {
+        Some(msg.to_string())
+    } else if lower.contains("[notify-error]") {
+        Some(msg.to_string())
+    } else if lower.contains("[microphone-status]") || lower.contains("[recognizer-error]") {
+        Some(msg.to_string())
+    } else if lower.contains("[settings-error]") || lower.contains("[restart-error]") {
+        Some(msg.to_string())
+    } else if lower.contains("[backend-error]") {
+        Some(msg.to_string())
+    } else {
+        None
     }
 }
 
@@ -367,9 +416,9 @@ impl TuiGuard {
                     let total = snap.logs.len();
                     let start = total.saturating_sub(visible_log_rows);
                     snap.logs
-                        .into_iter()
+                        .iter()
                         .skip(start)
-                        .map(|s| Line::from(Span::styled(s.clone(), Style::default().fg(log_color(&s)))))
+                        .map(|s| Line::from(Span::styled(s.clone(), Style::default().fg(log_color(s)))))
                         .collect()
                 };
                 if log_lines.is_empty() {
@@ -454,6 +503,18 @@ impl TuiGuard {
                                 controls.settings_editing
                                     && controls.settings_field == SettingsField::Port,
                             ));
+                            let masked_password = if draft.password.is_empty() {
+                                String::new()
+                            } else {
+                                "*".repeat(draft.password.chars().count())
+                            };
+                            settings_lines.push(settings_line(
+                                "RCON Password",
+                                &masked_password,
+                                controls.settings_field == SettingsField::Password,
+                                controls.settings_editing
+                                    && controls.settings_field == SettingsField::Password,
+                            ));
                         }
                         SettingsTab::App => {
                             settings_lines.push(settings_line(
@@ -490,7 +551,7 @@ impl TuiGuard {
                     ]));
                     settings_lines.push(Line::from(vec![
                         Span::styled("Примечание:", Style::default().fg(Color::Yellow)),
-                        Span::raw(" UI mode и username полностью применятся после перезапуска"),
+                        Span::raw(" UI mode / username / RCON password применятся после перезапуска"),
                     ]));
 
                     let popup_widget = Paragraph::new(settings_lines)
@@ -503,6 +564,29 @@ impl TuiGuard {
                                 .title("󰢻 Settings"),
                         );
                     f.render_widget(popup_widget, popup);
+                }
+
+                if let Some(err) = &snap.overlay_error {
+                    let width = f.area().width.clamp(24, 54);
+                    let overlay = Rect {
+                        x: f.area().right().saturating_sub(width + 1),
+                        y: 1,
+                        width,
+                        height: 4,
+                    };
+                    let overlay_widget = Paragraph::new(err.as_str())
+                        .wrap(Wrap { trim: true })
+                        .block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .border_type(BorderType::Rounded)
+                                .border_style(Style::default().fg(Color::Red))
+                                .title(Span::styled(
+                                    " Ошибка",
+                                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                                )),
+                        );
+                    f.render_widget(overlay_widget, overlay);
                 }
             })
             .map_err(|e| format!("terminal draw error: {e}"))?;
@@ -555,7 +639,7 @@ fn settings_tab_line(active: SettingsTab) -> Line<'static> {
 
 fn settings_fields_for_tab(tab: SettingsTab) -> &'static [SettingsField] {
     match tab {
-        SettingsTab::Connection => &[SettingsField::Host, SettingsField::Port],
+        SettingsTab::Connection => &[SettingsField::Host, SettingsField::Port, SettingsField::Password],
         SettingsTab::App => &[SettingsField::PlayerName, SettingsField::UiMode],
     }
 }
@@ -637,6 +721,31 @@ fn save_rcon_settings_to_config(path: &Path, host: &str, port: u16) -> Result<()
     let pretty = serde_json::to_string_pretty(&json)
         .map_err(|e| format!("Не удалось сериализовать config: {e}"))?;
     fs::write(path, pretty).map_err(|e| format!("Не удалось сохранить config `{}`: {e}", path.display()))
+}
+
+fn save_rcon_password_to_config(path: &Path, password: &str) -> Result<(), String> {
+    let raw = fs::read_to_string(path)
+        .map_err(|e| format!("Не удалось прочитать config `{}`: {e}", path.display()))?;
+    let mut json: Value =
+        serde_json::from_str(&raw).map_err(|e| format!("Ошибка JSON в config: {e}"))?;
+
+    let root = json
+        .as_object_mut()
+        .ok_or_else(|| "config.json должен быть объектом".to_string())?;
+    let minecraft = root
+        .entry("minecraft")
+        .or_insert_with(|| Value::Object(serde_json::Map::new()))
+        .as_object_mut()
+        .ok_or_else(|| "config.minecraft должен быть объектом".to_string())?;
+    minecraft.insert(
+        "rcon_password".to_string(),
+        Value::String(password.trim().to_string()),
+    );
+
+    let pretty = serde_json::to_string_pretty(&json)
+        .map_err(|e| format!("Не удалось сериализовать config: {e}"))?;
+    fs::write(path, pretty)
+        .map_err(|e| format!("Не удалось сохранить config `{}`: {e}", path.display()))
 }
 
 fn save_ui_mode_to_config(path: &Path, mode: UiMode) -> Result<(), String> {
@@ -2596,9 +2705,11 @@ impl BlockDeleteController {
         let mut settings_draft = SettingsDraft {
             host: self.config.minecraft.rcon_host.clone(),
             port: self.config.minecraft.rcon_port.to_string(),
+            password: self.config.minecraft.rcon_password.clone(),
             player_name: self.config.microphone.player_name.clone(),
             ui_mode: self.config.ui.mode.unwrap_or(UiMode::Tui),
         };
+        let mut restart_after_tui_exit = false;
         ui_log(&self.ui, "[ui] q - выйти");
 
         while !shutdown.load(Ordering::Relaxed) {
@@ -2676,6 +2787,7 @@ impl BlockDeleteController {
                                         let snap = ui_snapshot(&self.ui);
                                         settings_draft.host = snap.rcon_host;
                                         settings_draft.port = snap.rcon_port.to_string();
+                                        settings_draft.password = snap.rcon_password;
                                         settings_draft.player_name = snap.player_name;
                                         settings_draft.ui_mode = snap.ui_mode;
                                         controls.settings_tab = SettingsTab::Connection;
@@ -2695,6 +2807,9 @@ impl BlockDeleteController {
                                     }
                                     SettingsField::Port => {
                                         settings_draft.port.pop();
+                                    }
+                                    SettingsField::Password => {
+                                        settings_draft.password.pop();
                                     }
                                     SettingsField::PlayerName => {
                                         settings_draft.player_name.pop();
@@ -2718,23 +2833,15 @@ impl BlockDeleteController {
                                     match self.save_settings_bundle(
                                         host.clone(),
                                         port,
+                                        settings_draft.password.clone(),
                                         settings_draft.player_name.clone(),
                                         settings_draft.ui_mode,
                                     ) {
                                         Ok(outcome) => {
                                             controls.settings_open = false;
                                             if outcome.restart_required {
-                                                match restart_current_process() {
-                                                    Ok(()) => {
-                                                        shutdown.store(true, Ordering::SeqCst);
-                                                    }
-                                                    Err(err) => {
-                                                        ui_log(
-                                                            &self.ui,
-                                                            format!("[restart-error] {err}"),
-                                                        );
-                                                    }
-                                                }
+                                                restart_after_tui_exit = true;
+                                                shutdown.store(true, Ordering::SeqCst);
                                             }
                                         }
                                         Err(err) => ui_log(&self.ui, format!("[settings-error] {err}")),
@@ -2753,6 +2860,11 @@ impl BlockDeleteController {
                                     SettingsField::Port => {
                                         if c.is_ascii_digit() {
                                             settings_draft.port.push(c);
+                                        }
+                                    }
+                                    SettingsField::Password => {
+                                        if !c.is_control() {
+                                            settings_draft.password.push(c);
                                         }
                                     }
                                     SettingsField::PlayerName => {
@@ -2783,6 +2895,10 @@ impl BlockDeleteController {
         let _ = recognizer_handle.join();
         drop(event_worker);
         drop(presence_worker);
+        drop(tui);
+        if restart_after_tui_exit {
+            restart_current_process()?;
+        }
         Ok(())
     }
 
@@ -2868,13 +2984,18 @@ impl BlockDeleteController {
         &self,
         host: String,
         port: u16,
+        rcon_password: String,
         player_name: String,
         ui_mode: UiMode,
     ) -> Result<SaveSettingsOutcome, String> {
         let host = host.trim().to_string();
+        let rcon_password = rcon_password.trim().to_string();
         let player_name = player_name.trim().to_string();
         if host.is_empty() {
             return Err("IP/host пустой".to_string());
+        }
+        if rcon_password.is_empty() {
+            return Err("RCON password пустой".to_string());
         }
         if player_name.is_empty() {
             return Err("Username/player_name пустой".to_string());
@@ -2882,15 +3003,20 @@ impl BlockDeleteController {
 
         let old_player_name = self.config.microphone.player_name.trim().to_string();
         let old_ui_mode = self.config.ui.mode.unwrap_or(UiMode::Tui);
-        let restart_required = old_player_name != player_name || old_ui_mode != ui_mode;
+        let old_rcon_password = self.config.minecraft.rcon_password.trim().to_string();
+        let restart_required = old_player_name != player_name
+            || old_ui_mode != ui_mode
+            || old_rcon_password != rcon_password;
 
         save_rcon_settings_to_config(&self.config_path, &host, port)?;
+        save_rcon_password_to_config(&self.config_path, &rcon_password)?;
         save_player_name_to_config(&self.config_path, &player_name)?;
         save_ui_mode_to_config(&self.config_path, ui_mode)?;
 
         if let Ok(mut ui) = self.ui.lock() {
             ui.rcon_host = host.clone();
             ui.rcon_port = port;
+            ui.rcon_password = rcon_password.clone();
             ui.player_name = player_name.clone();
             ui.ui_mode = ui_mode;
         }
@@ -2909,7 +3035,7 @@ impl BlockDeleteController {
         if restart_required {
             ui_log(
                 &self.ui,
-                "[settings] ui_mode/player_name изменены, выполняю автоперезапуск...",
+                "[settings] ui_mode/player_name/rcon_password изменены, выполняю автоперезапуск...",
             );
         }
         Ok(SaveSettingsOutcome { restart_required })
