@@ -112,7 +112,8 @@ jobs:
 
           $lib = Get-ChildItem "$env:TEMP\\vosk-win64" -Recurse -Filter *.lib | Where-Object { $_.Name -match 'vosk' } | Select-Object -First 1
           if (-not $lib) { throw "vosk import lib (.lib) not found in archive. Add conversion step or pin another Vosk release." }
-          Copy-Item $lib.FullName "third_party/vosk-win64/vosk.lib" -Force
+          # vosk-sys links against `vosk`, MSVC linker resolves that as `libvosk.lib`
+          Copy-Item $lib.FullName "third_party/vosk-win64/libvosk.lib" -Force
 
       - name: Download Vosk RU model
         shell: pwsh
