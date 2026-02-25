@@ -11,10 +11,6 @@
 Приложение слушает микрофон, распознает речь, сопоставляет фразы/алиасы с блоками и удаляет найденные блоки в чанке игрока через `fill`.
 
 ## Features
-
-- Rust backend (быстрее и кроссплатформенно)
-- Vosk speech recognition (русская модель)
-- Minecraft RCON (без Python-зависимостей)
 - `TUI` интерфейс (`ratatui`)
 - `Qt/QML` интерфейс (`qmetaobject`)
 - Настройки в UI (IP, Port, Username, UI mode)
@@ -127,14 +123,5 @@ cargo build --release --target x86_64-pc-windows-gnu
 - `speech.model_path`
 - `ui.mode`
 
-## Development Notes
-
-- `TUI` и `Qt` вынесены в отдельные модули:
-  - `src/ui_tui.rs`
-  - `src/ui_qt.rs`
-- backend bootstrap:
-  - `src/backend_bootstrap.rs`
 
 ## License
-
-Лицензия пока не добавлена. Если планируется публичное использование, добавь `LICENSE`.
