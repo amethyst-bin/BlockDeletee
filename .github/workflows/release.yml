@@ -1,0 +1,155 @@
+name: Build And Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  VOSK_VERSION: "0.3.45"
+  VOSK_MODEL_RU_SMALL: "vosk-model-small-ru-0.22"
+  VOSK_MODEL_RU_SMALL_ZIP_URL: "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip"
+
+jobs:
+  build-linux:
+    name: Linux x64
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install OS deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip zip curl libasound2-dev
+
+      - name: Install Qt 6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.6.3"
+          host: "linux"
+          target: "desktop"
+          arch: "gcc_64"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Download Vosk Linux runtime
+        run: |
+          mkdir -p third_party/vosk-linux
+          curl -L "https://github.com/alphacep/vosk-api/releases/download/v${VOSK_VERSION}/vosk-linux-x86_64-${VOSK_VERSION}.zip" -o /tmp/vosk-linux.zip
+          unzip -q /tmp/vosk-linux.zip -d /tmp/vosk-linux
+          find /tmp/vosk-linux -name 'libvosk.so' -type f -print -quit | xargs -I{} cp "{}" third_party/vosk-linux/libvosk.so
+
+      - name: Download Vosk RU model
+        run: |
+          mkdir -p models
+          curl -L "${VOSK_MODEL_RU_SMALL_ZIP_URL}" -o /tmp/vosk-model.zip
+          unzip -q /tmp/vosk-model.zip -d models
+
+      - name: Build release (Linux)
+        env:
+          RUSTFLAGS: -L native=${{ github.workspace }}/third_party/vosk-linux
+        run: cargo build --release
+
+      - name: Pack Linux release zip
+        run: |
+          VERSION_TAG="${GITHUB_REF_NAME:-dev}"
+          mkdir -p dist-linux/BlockDeletee
+          cp target/release/blockdeletee dist-linux/BlockDeletee/
+          cp third_party/vosk-linux/libvosk.so dist-linux/BlockDeletee/
+          cp blocks.json dist-linux/BlockDeletee/
+          cp config.example.json dist-linux/BlockDeletee/config.json
+          cp README.md dist-linux/BlockDeletee/
+          cp -r models dist-linux/BlockDeletee/
+          (cd dist-linux && zip -r "../BlockDeletee-linux-x64-${VERSION_TAG}.zip" BlockDeletee)
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: blockdeletee-linux-x64
+          path: BlockDeletee-linux-x64-*.zip
+
+      - name: Upload Linux release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: BlockDeletee-linux-x64-*.zip
+
+  build-windows:
+    name: Windows x64
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Qt 6 (MSVC)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.6.3"
+          host: "windows"
+          target: "desktop"
+          arch: "win64_msvc2019_64"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Download Vosk Windows runtime
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party/vosk-win64 | Out-Null
+          $zip = "$env:TEMP\\vosk-win64.zip"
+          Invoke-WebRequest -Uri "https://github.com/alphacep/vosk-api/releases/download/v$env:VOSK_VERSION/vosk-win64-$env:VOSK_VERSION.zip" -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath "$env:TEMP\\vosk-win64" -Force
+
+          $dll = Get-ChildItem "$env:TEMP\\vosk-win64" -Recurse -Filter *.dll | Where-Object { $_.Name -match 'vosk' } | Select-Object -First 1
+          if (-not $dll) { throw "vosk DLL not found in archive" }
+          Copy-Item $dll.FullName "third_party/vosk-win64/vosk.dll" -Force
+
+          $lib = Get-ChildItem "$env:TEMP\\vosk-win64" -Recurse -Filter *.lib | Where-Object { $_.Name -match 'vosk' } | Select-Object -First 1
+          if (-not $lib) { throw "vosk import lib (.lib) not found in archive. Add conversion step or pin another Vosk release." }
+          Copy-Item $lib.FullName "third_party/vosk-win64/vosk.lib" -Force
+
+      - name: Download Vosk RU model
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path models | Out-Null
+          $zip = "$env:TEMP\\vosk-model.zip"
+          Invoke-WebRequest -Uri $env:VOSK_MODEL_RU_SMALL_ZIP_URL -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath models -Force
+
+      - name: Build release (Windows)
+        shell: pwsh
+        run: |
+          $env:RUSTFLAGS = "-L native=$pwd\\third_party\\vosk-win64"
+          cargo build --release
+
+      - name: Pack Windows release zip
+        shell: pwsh
+        run: |
+          $versionTag = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "dev" }
+          $dist = Join-Path $pwd "dist-win\\BlockDeletee"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item "target\\release\\blockdeletee.exe" $dist -Force
+          Copy-Item "third_party\\vosk-win64\\vosk.dll" $dist -Force
+          Copy-Item "blocks.json" $dist -Force
+          Copy-Item "config.example.json" (Join-Path $dist "config.json") -Force
+          Copy-Item "README.md" $dist -Force
+          Copy-Item "models" $dist -Recurse -Force
+          Compress-Archive -Path "dist-win\\BlockDeletee" -DestinationPath "BlockDeletee-windows-x64-$versionTag.zip" -Force
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: blockdeletee-windows-x64
+          path: BlockDeletee-windows-x64-*.zip
+
+      - name: Upload Windows release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: BlockDeletee-windows-x64-*.zip
